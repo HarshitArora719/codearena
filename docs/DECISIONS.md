@@ -22,3 +22,13 @@
 ## 003: Containment, not detection
 - Blocked attacks may still exit 0. Verdicts come from output + exit status;
   the sandbox only guarantees harmlessness.
+
+## 004: Enforce limits from outside the sandbox (Node supervisor)
+- Problem: a limit enforced inside the container can be bypassed or never fire.
+- Options: `timeout` inside container only; Node supervisor; cgroup-only limits.
+- Choice: Node enforces wall time (docker kill) and output size (byte counter,
+  kill past 1 MB); memory uses Docker's OOMKilled flag to tell MLE from RE.
+- Why: the judge must not trust the thing it's judging. OOMKilled is the kernel's
+  own report, not a guess from exit code 137.
+- Known limits: wall time includes container startup and kill latency
+  (observed 2618 ms on a 2000 ms limit). Later: measure CPU time from cgroups.
