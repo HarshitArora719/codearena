@@ -32,3 +32,21 @@
   own report, not a guess from exit code 137.
 - Known limits: wall time includes container startup and kill latency
   (observed 2618 ms on a 2000 ms limit). Later: measure CPU time from cgroups.
+
+  ## 005: Redis Streams with a consumer group, not a plain list
+- Problem: a job popped by a worker that then crashes must not vanish.
+- Options: Redis list (LPUSH/BRPOP), list + RPOPLPUSH, BullMQ, Streams, RabbitMQ/Kafka.
+- Choice: Streams + consumer group (XADD, XREADGROUP, XACK, XAUTOCLAIM).
+- Why: Streams keep a pending entry per delivered-but-unacked job. Verified by
+  killing a worker mid-job: XPENDING showed 1, a second worker reclaimed it,
+  and XPENDING went to 0 after judging.
+- Rejected: BullMQ hides these internals (fine for production, worse for learning);
+  RabbitMQ/Kafka are overkill at this scale and cost an extra service.
+- Revisit when: multiple queues/priorities or cross-service routing are needed.
+
+## 006: At-least-once delivery + idempotent result write
+- Problem: after a crash a job may run twice; exactly-once is not achievable here.
+- Choice: deliver at least once; write the result with SET NX keyed by submission id.
+- Why: a duplicate run cannot overwrite or change the first stored result.
+- Constraint: CLAIM_IDLE_MS must exceed the longest possible judge time, or a
+  healthy slow job gets stolen and judged twice (still safe, but wasteful).
