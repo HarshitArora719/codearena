@@ -33,7 +33,7 @@
 - Known limits: wall time includes container startup and kill latency
   (observed 2618 ms on a 2000 ms limit). Later: measure CPU time from cgroups.
 
-  ## 005: Redis Streams with a consumer group, not a plain list
+## 005: Redis Streams with a consumer group, not a plain list
 - Problem: a job popped by a worker that then crashes must not vanish.
 - Options: Redis list (LPUSH/BRPOP), list + RPOPLPUSH, BullMQ, Streams, RabbitMQ/Kafka.
 - Choice: Streams + consumer group (XADD, XREADGROUP, XACK, XAUTOCLAIM).
@@ -50,3 +50,13 @@
 - Why: a duplicate run cannot overwrite or change the first stored result.
 - Constraint: CLAIM_IDLE_MS must exceed the longest possible judge time, or a
   healthy slow job gets stolen and judged twice (still safe, but wasteful).
+
+## 007: One job per worker process
+- Problem: concurrent containers compete for CPU and distort timing and TLE verdicts.
+- Choice: each worker judges one submission at a time; scale by running more workers.
+- Revisit when: measuring CPU time from cgroups makes concurrency safe.
+
+## 008: Dead-letter after 3 deliveries
+- Problem: a poison job (bad payload, judge bug) would be retried forever.
+- Choice: after 3 deliveries move it to `submissions:dead`, store verdict SE, ack it.
+- Verified: bad payload failed 3 times, then was dead-lettered at delivery #4.

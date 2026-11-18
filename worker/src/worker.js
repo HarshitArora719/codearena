@@ -1,6 +1,8 @@
 import { hostname } from 'node:os';
 import { judge } from './sandbox.js';
-import { makeRedis, STREAM, GROUP, DEAD } from './queue.js';
+import { makeRedis, STREAM, GROUP, DEAD } from '../../shared/queue.js';
+import { connectDb, mongoose } from '../../shared/db.js';
+import { Problem, TestCase, Submission } from '../../shared/models.js';
 
 const consumer = `${hostname()}-${process.pid}`;
 const CLAIM_IDLE_MS = Number(process.env.CLAIM_IDLE_MS ?? 60_000);
@@ -21,13 +23,33 @@ async function ensureGroup() {
 }
 
 async function handle(entryId, fields) {
-  const job = toObj(fields);
-  const { source, tests, timeLimitMs, memoryMb } = JSON.parse(job.payload);
-  const result = await judge({ source, tests, timeLimitMs, memoryMb });
-  // idempotent: first result wins, so a re-run after a crash cannot overwrite it
-  await redis.set(`result:${job.id}`, JSON.stringify(result), 'NX');
+  const { submissionId } = toObj(fields);
+  const sub = await Submission.findById(submissionId);
+  if (!sub) throw new Error(`submission ${submissionId} not found`);
+
+  if (sub.status === 'DONE') { // duplicate delivery after a crash: already judged
+    await redis.xack(STREAM, GROUP, entryId);
+    return;
+  }
+  await Submission.updateOne({ _id: sub._id, status: 'QUEUED' }, { status: 'RUNNING' });
+
+  const problem = await Problem.findById(sub.problemId).lean();
+  const tests = (await TestCase.find({ problemId: sub.problemId }).sort('idx').lean())
+    .map((t) => ({ input: t.input, expected: t.expected }));
+
+  const result = await judge({
+    source: sub.source, tests,
+    timeLimitMs: problem.timeLimitMs, memoryMb: problem.memoryMb,
+  });
+
+  const { verdict, failedTest = null, timeMs = null, detail = null } = result;
+  // idempotent: only the first finisher writes the result
+  await Submission.updateOne(
+    { _id: sub._id, status: { $ne: 'DONE' } },
+    { status: 'DONE', verdict, failedTest, timeMs, detail },
+  );
   await redis.xack(STREAM, GROUP, entryId);
-  console.log(`[${consumer}] ${job.id} -> ${result.verdict}`);
+  console.log(`[${consumer}] ${submissionId} -> ${verdict}`);
 }
 
 async function safeHandle(entryId, fields) {
@@ -36,14 +58,16 @@ async function safeHandle(entryId, fields) {
 }
 
 async function deadLetter(entryId, fields) {
-  const job = toObj(fields);
+  const { submissionId } = toObj(fields);
   await redis.xadd(DEAD, '*', 'origId', entryId, ...fields);
-  await redis.set(`result:${job.id}`, JSON.stringify({ verdict: 'SE' }), 'NX');
+  if (mongoose.isValidObjectId(submissionId)) {
+    await Submission.updateOne({ _id: submissionId, status: { $ne: 'DONE' } },
+      { status: 'DONE', verdict: 'SE' });
+  }
   await redis.xack(STREAM, GROUP, entryId);
-  console.log(`[${consumer}] ${job.id} -> dead-lettered (SE)`);
+  console.log(`[${consumer}] ${submissionId} -> dead-lettered (SE)`);
 }
 
-// Take over one job that another worker received but never acknowledged.
 async function reclaimOne() {
   const res = await redis.xautoclaim(STREAM, GROUP, consumer, CLAIM_IDLE_MS, '0-0', 'COUNT', 1);
   const entries = res[1];
@@ -58,6 +82,7 @@ async function reclaimOne() {
 }
 
 async function main() {
+  await connectDb();
   await ensureGroup();
   console.log(`[${consumer}] up, reclaim idle > ${CLAIM_IDLE_MS} ms`);
   while (!stopping) {
@@ -73,6 +98,7 @@ async function main() {
     await safeHandle(entryId, fields);
   }
   redis.disconnect();
+  await mongoose.disconnect();
 }
 
 main();
