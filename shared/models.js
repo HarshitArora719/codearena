@@ -20,7 +20,7 @@ export const TestCase = mongoose.model('TestCase', new Schema({
 
 export const Submission = mongoose.model('Submission', new Schema({
   problemId: { type: Schema.Types.ObjectId, ref: 'Problem', required: true },
-  userId: { type: Schema.Types.ObjectId, ref: 'User' }, // required in step 5b
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   language: { type: String, default: 'cpp' },
   source: { type: String, required: true },
   status: { type: String, enum: ['QUEUED', 'RUNNING', 'DONE'], default: 'QUEUED', index: true },
@@ -28,4 +28,9 @@ export const Submission = mongoose.model('Submission', new Schema({
   failedTest: Number,
   timeMs: Number,
   detail: String,
+}, { timestamps: true }));
+export const User = mongoose.model('User', new Schema({
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  name: { type: String, required: true, trim: true },
+  passwordHash: { type: String, required: true },
 }, { timestamps: true }));

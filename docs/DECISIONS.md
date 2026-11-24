@@ -60,3 +60,45 @@
 - Problem: a poison job (bad payload, judge bug) would be retried forever.
 - Choice: after 3 deliveries move it to `submissions:dead`, store verdict SE, ack it.
 - Verified: bad payload failed 3 times, then was dead-lettered at delivery #4.
+
+## 009: The queue carries only the submission ID
+- Choice: the stream holds the ID; the worker loads source and tests from MongoDB.
+- Why: Mongo is the single source of truth; stream messages stay tiny.
+- Rejected: putting source code in the stream (two copies of the data, large messages).
+
+## 010: Hidden tests in a separate collection
+- Choice: TestCase collection; the API never returns test inputs or expected outputs.
+- Why: no query on Problem can leak them. Verified: GET /api/problems/sum-two shows
+  no tests, and results expose only the failing test's index.
+- Revisit when: tests grow large (move to object storage).
+
+## 011: Known gap: dual write between Mongo and the stream
+- Problem: API saves to Mongo, then XADDs. A crash in between leaves a submission
+  QUEUED forever.
+- Plan: a sweeper that re-enqueues old QUEUED submissions (the worker already
+  ignores duplicates thanks to the status guard), added in the hardening step.
+
+## 012: bcrypt (cost 12) for password hashing
+- Why: slow by design, per-user salt built in, widely understood. Passwords capped at
+  72 bytes (bcrypt's limit). Login runs a dummy compare when the email is unknown so
+  timing does not reveal which emails exist.
+- Rejected/revisit: Argon2id is the current first recommendation; bcrypt kept for
+  ubiquity. Be ready to say that.
+
+## 013: JWT in an httpOnly, SameSite=Lax cookie (HS256 pinned)
+- Why: JS cannot read httpOnly cookies, so an XSS bug cannot steal the session.
+  Algorithm pinned on verify to block alg=none and confusion attacks.
+- Rejected: localStorage (readable by any script); server sessions in Redis (revocable).
+- Trade-off: a JWT cannot be revoked before expiry (logout only clears the cookie).
+- Revisit: add a CSRF token if the frontend ends up on a different site.
+
+## 014: Redis fixed-window rate limiting (INCR + EXPIRE NX in one MULTI)
+- Limits: login 10/15 min per IP, register 5/hour per IP, submit 10/min per user.
+- Why: atomic, shared by all API instances, tiny. NX in the same MULTI means a crash
+  cannot leave a counter with no TTL.
+- Weaknesses: a burst up to 2x at a window boundary; per-IP limits are wrong behind a
+  proxy unless trust proxy is configured; add per-account login limits.
+
+## 015: Max 3 unfinished submissions per user
+- Why: fairness, so one user cannot fill the queue and starve everyone else.
+- Weakness: count-then-insert is approximate under truly concurrent requests.
