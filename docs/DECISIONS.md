@@ -102,3 +102,15 @@
 ## 015: Max 3 unfinished submissions per user
 - Why: fairness, so one user cannot fill the queue and starve everyone else.
 - Weakness: count-then-insert is approximate under truly concurrent requests.
+
+## 016: SSE for live status (not WebSockets or polling)
+- Why: updates flow one way (server to browser), SSE is plain HTTP, the browser
+  reconnects by itself, and cookie auth works unchanged.
+- Rejected: WebSockets (two-way, more machinery, only needed for live contest chat);
+  polling (wasteful, slower to feel live).
+
+## 017: Redis pub/sub for events, MongoDB stays the source of truth
+- Problem: worker and API are separate processes; pub/sub drops messages if nobody listens.
+- Choice: on connect, subscribe first, then read Mongo and send the snapshot (buffering
+  events that arrive meanwhile); re-check Mongo every 5 s; a failed publish never fails a job.
+- Also: ownership checked (404 for others), max 5 open streams per user.

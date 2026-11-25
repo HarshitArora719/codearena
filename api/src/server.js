@@ -7,6 +7,7 @@ import { Problem, Submission, User } from '../../shared/models.js';
 import { makeRedis, STREAM } from '../../shared/queue.js';
 import { setSession, clearSession, requireAuth } from './auth.js';
 import { rateLimit } from './ratelimit.js';
+import { mountEvents } from './events.js';
 
 await connectDb();
 const redis = makeRedis();
@@ -116,6 +117,8 @@ app.get('/api/submissions/:id', requireAuth, async (req, res) => {
   if (!s) return res.status(404).json({ error: 'not found' });
   res.json(s);
 });
+
+mountEvents(app);
 
 app.use((err, req, res, next) => {
   console.error(err);

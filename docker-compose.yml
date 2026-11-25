@@ -1,10 +1,12 @@
 services:
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports: ["127.0.0.1:6379:6379"]
     volumes: ["redis-data:/data"]
   mongo:
+    restart: unless-stopped
     image: mongo:7
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.5"]
     ports: ["127.0.0.1:27018:27017"]

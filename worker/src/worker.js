@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import { judge } from './sandbox.js';
-import { makeRedis, STREAM, GROUP, DEAD } from '../../shared/queue.js';
+import { makeRedis, STREAM, GROUP, DEAD, EVENTS } from '../../shared/queue.js';
 import { connectDb, mongoose } from '../../shared/db.js';
 import { Problem, TestCase, Submission } from '../../shared/models.js';
 
@@ -22,6 +22,12 @@ async function ensureGroup() {
   catch (e) { if (!String(e.message).includes('BUSYGROUP')) throw e; }
 }
 
+// Best-effort live update. MongoDB is the source of truth, so a lost event is never fatal.
+async function notify(id, data) {
+  try { await redis.publish(EVENTS, JSON.stringify({ id: String(id), ...data })); }
+  catch (e) { console.error(`[${consumer}] notify failed: ${e.message}`); }
+}
+
 async function handle(entryId, fields) {
   const { submissionId } = toObj(fields);
   const sub = await Submission.findById(submissionId);
@@ -32,6 +38,7 @@ async function handle(entryId, fields) {
     return;
   }
   await Submission.updateOne({ _id: sub._id, status: 'QUEUED' }, { status: 'RUNNING' });
+  await notify(sub._id, { status: 'RUNNING' });
 
   const problem = await Problem.findById(sub.problemId).lean();
   const tests = (await TestCase.find({ problemId: sub.problemId }).sort('idx').lean())
@@ -48,6 +55,7 @@ async function handle(entryId, fields) {
     { _id: sub._id, status: { $ne: 'DONE' } },
     { status: 'DONE', verdict, failedTest, timeMs, detail },
   );
+  await notify(sub._id, { status: 'DONE', verdict, failedTest, timeMs, detail });
   await redis.xack(STREAM, GROUP, entryId);
   console.log(`[${consumer}] ${submissionId} -> ${verdict}`);
 }
@@ -63,6 +71,7 @@ async function deadLetter(entryId, fields) {
   if (mongoose.isValidObjectId(submissionId)) {
     await Submission.updateOne({ _id: submissionId, status: { $ne: 'DONE' } },
       { status: 'DONE', verdict: 'SE' });
+    await notify(submissionId, { status: 'DONE', verdict: 'SE' });
   }
   await redis.xack(STREAM, GROUP, entryId);
   console.log(`[${consumer}] ${submissionId} -> dead-lettered (SE)`);
