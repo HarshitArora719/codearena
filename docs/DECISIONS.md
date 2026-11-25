@@ -114,3 +114,12 @@
 - Choice: on connect, subscribe first, then read Mongo and send the snapshot (buffering
   events that arrive meanwhile); re-check Mongo every 5 s; a failed publish never fails a job.
 - Also: ownership checked (404 for others), max 5 open streams per user.
+
+## 018: Vite dev server proxies /api to the API
+- Why: browser sees one origin, so the httpOnly cookie and EventSource work with no CORS.
+- Revisit: in deployment serve the built frontend and the API behind one origin.
+
+## 019: Client closes EventSource on DONE, with a polling fallback
+- Problem: when the server ends an SSE stream, the browser treats it as a dropped
+  connection and reconnects every 3 s forever.
+- Choice: close() on the final event; on error fetch the final state from the plain endpoint.
