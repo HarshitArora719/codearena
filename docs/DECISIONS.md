@@ -123,3 +123,11 @@
 - Problem: when the server ends an SSE stream, the browser treats it as a dropped
   connection and reconnects every 3 s forever.
 - Choice: close() on the final event; on error fetch the final state from the plain endpoint.
+
+## 020: Automated adversarial test suite for the sandbox
+- Choice: node:test file that runs judge() directly against 13 cases (all 7 verdicts,
+  fork bomb, compile bomb, network, read-only fs, non-root, leftover containers).
+- Containment checks run the attack and verify it FAILED (program prints BLOCKED /
+  READONLY / uid 1000), instead of trusting a verdict.
+- Why: after any sandbox change one command (npm test) shows whether a hole opened.
+- Result: 13/13 pass in about 15 s.
