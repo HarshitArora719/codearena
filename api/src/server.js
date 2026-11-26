@@ -7,6 +7,7 @@ import { Problem, Submission, User } from '../../shared/models.js';
 import { makeRedis, STREAM } from '../../shared/queue.js';
 import { setSession, clearSession, requireAuth } from './auth.js';
 import { rateLimit } from './ratelimit.js';
+import { enqueueSubmission } from '../../shared/enqueue.js';
 import { mountEvents } from './events.js';
 
 await connectDb();
@@ -102,7 +103,9 @@ app.post('/api/submissions', requireAuth, limitSubmit, async (req, res) => {
   if (!problem) return res.status(404).json({ error: 'problem not found' });
 
   const sub = await Submission.create({ problemId: problem._id, userId: req.userId, language, source });
-  await redis.xadd(STREAM, '*', 'submissionId', String(sub._id));
+  // Mongo is the commit point. If enqueueing fails the sweeper will retry, so still answer 202.
+  try { await enqueueSubmission(redis, sub._id); }
+  catch (e) { console.error('enqueue failed, sweeper will retry:', e.message); }
   res.status(202).json({ id: sub._id, status: sub.status });
 });
 

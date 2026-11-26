@@ -131,3 +131,15 @@
   READONLY / uid 1000), instead of trusting a verdict.
 - Why: after any sandbox change one command (npm test) shows whether a hole opened.
 - Result: 13/13 pass in about 15 s.
+
+## 021: Sweeper closes the dual-write gap (decision 011)
+- Problem: a crash between "save to Mongo" and "XADD" left submissions QUEUED forever.
+- Choice: Mongo is the commit point (API answers 202 even if enqueue fails); enqueuedAt
+  marks a submission as announced; every worker runs a sweeper (Redis SET NX lock, so
+  one sweeps at a time) that re-enqueues QUEUED submissions with no marker after 30 s,
+  and re-announces anything QUEUED for over 10 minutes.
+- Why duplicates are safe: the status guard writes a result only once (decision 006).
+- Verified: planted a submission that was never on the stream; it was picked up
+  about 40 s later and judged AC.
+- Limits: a duplicate delivered while the first run is still RUNNING wastes work (a
+  per-submission lease would fix it); the sweeper does not help during a full Redis outage.

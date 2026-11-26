@@ -3,6 +3,7 @@ import { judge } from './sandbox.js';
 import { makeRedis, STREAM, GROUP, DEAD, EVENTS } from '../../shared/queue.js';
 import { connectDb, mongoose } from '../../shared/db.js';
 import { Problem, TestCase, Submission } from '../../shared/models.js';
+import { enqueueSubmission } from '../../shared/enqueue.js';
 
 const consumer = `${hostname()}-${process.pid}`;
 const CLAIM_IDLE_MS = Number(process.env.CLAIM_IDLE_MS ?? 60_000);
@@ -90,10 +91,38 @@ async function reclaimOne() {
   return true;
 }
 
+const SWEEP_EVERY_MS = Number(process.env.SWEEP_EVERY_MS ?? 15_000);
+const ORPHAN_AFTER_MS = Number(process.env.ORPHAN_AFTER_MS ?? 30_000);
+const REANNOUNCE_AFTER_MS = 10 * 60_000;
+
+// Re-announce QUEUED submissions that never reached the stream (API crashed, or Redis was down,
+// between the Mongo write and XADD). Duplicates are harmless because judging is idempotent.
+async function sweep() {
+  try {
+    const got = await redis.set('lock:sweeper', consumer, 'PX', SWEEP_EVERY_MS, 'NX');
+    if (!got) return; // another worker holds the sweep lock
+    const now = Date.now();
+    const stuck = await Submission.find({
+      status: 'QUEUED',
+      $or: [
+        { enqueuedAt: null, createdAt: { $lt: new Date(now - ORPHAN_AFTER_MS) } },
+        { enqueuedAt: { $lt: new Date(now - REANNOUNCE_AFTER_MS) } },
+      ],
+    }, '_id').limit(50).lean();
+    for (const s of stuck) {
+      await enqueueSubmission(redis, s._id);
+      console.log(`[${consumer}] sweeper re-enqueued ${s._id}`);
+    }
+  } catch (e) {
+    console.error(`[${consumer}] sweep failed: ${e.message}`);
+  }
+}
+
 async function main() {
   await connectDb();
   await ensureGroup();
   console.log(`[${consumer}] up, reclaim idle > ${CLAIM_IDLE_MS} ms`);
+  const sweepTimer = setInterval(sweep, SWEEP_EVERY_MS);
   while (!stopping) {
     if (await reclaimOne()) continue;
     const res = await redis.xreadgroup('GROUP', GROUP, consumer, 'COUNT', 1,
@@ -106,6 +135,7 @@ async function main() {
     }
     await safeHandle(entryId, fields);
   }
+  clearInterval(sweepTimer);
   redis.disconnect();
   await mongoose.disconnect();
 }

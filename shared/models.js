@@ -28,6 +28,7 @@ export const Submission = mongoose.model('Submission', new Schema({
   failedTest: Number,
   timeMs: Number,
   detail: String,
+  enqueuedAt: Date, // set once the ID is on the stream; the sweeper uses it
 }, { timestamps: true }));
 export const User = mongoose.model('User', new Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
