@@ -143,3 +143,22 @@
   about 40 s later and judged AC.
 - Limits: a duplicate delivered while the first run is still RUNNING wastes work (a
   per-submission lease would fix it); the sweeper does not help during a full Redis outage.
+
+## 022: Benchmark the judging pipeline directly, not through the API
+- Why: API rate limits (10 per minute per user, 3 unfinished) would block a load test, and
+  weakening them for a benchmark is the wrong trade. The pipeline is what is worth measuring.
+- Two modes: burst for throughput, steady rate for latency. Burst latency is mostly queue
+  position, so it is not reported as latency.
+- Lesson: a steady-rate test is only valid below capacity. Offered load must be about 50%
+  of measured throughput, or latency is just queue length.
+
+## 023: Keep a fresh container per test; do not collapse tests into one container
+- Measured: about 59% of a submission's time is the 5 test-container starts (about 315 ms
+  each); queue and database overhead are below noise.
+- Option not taken: one container per submission with an in-container supervisor, about 40%
+  faster, but tests would share tmpfs and process space, limit enforcement would move inside
+  the sandbox (undoing decision 004), and per-test memory attribution gets unclear.
+- Why: measured capacity (about 22 per minute per worker, about 53 with 4 workers) covers the
+  expected contest peak (50 users, about 30 submissions per minute) with about 1.7x headroom
+  on 4 workers. One worker alone would not.
+- Revisit when: real load exceeds capacity.

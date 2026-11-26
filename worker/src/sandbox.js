@@ -43,6 +43,7 @@ export async function judge({ source, tests, timeLimitMs = 2000, memoryMb = 128 
   await chmod(dir, 0o777); // container runs as uid 1000 and must write the binary here
   try {
     await writeFile(path.join(dir, 'main.cpp'), source);
+    const tC = Date.now();
 
     // Phase 1: compile (own limits, so compile bombs can't hang us)
     const cname = 'ca-c-' + randomUUID().slice(0, 8);
@@ -52,6 +53,7 @@ export async function judge({ source, tests, timeLimitMs = 2000, memoryMb = 128 
         IMAGE, 'timeout', '-s', 'KILL', '20', 'g++', '-O2', '-o', '/box/a', '/box/main.cpp'],
       { name: cname, timeoutMs: 15000 });
     await rmContainer(cname);
+    const compileMs = Date.now() - tC;
     if (c.timedOut || c.code !== 0) return { verdict: 'CE', detail: c.err.slice(0, 2000) };
 
     // Phase 2: run each test in a fresh container
@@ -67,8 +69,13 @@ export async function judge({ source, tests, timeLimitMs = 2000, memoryMb = 128 
         { input: t.input, name, timeoutMs: timeLimitMs });
       const ms = Date.now() - t0;
       maxMs = Math.max(maxMs, ms);
+      const tI = Date.now();
       const oom = await oomKilled(name);
+      const inspectMs = Date.now() - tI;
+      const tR = Date.now();
       await rmContainer(name);
+      const rmMs = Date.now() - tR;
+      if (process.env.TIMING) console.log(`[timing] test ${i}: run=${ms}ms inspect=${inspectMs}ms rm=${rmMs}ms (compile phase=${compileMs}ms)`);
 
       const fail = (verdict) => ({ verdict, failedTest: i, timeMs: ms });
       if (r.tooMuch) return fail('OLE');
